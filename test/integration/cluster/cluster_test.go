@@ -21,12 +21,7 @@ func TestCluster(t *testing.T) {
 	RunSpecs(t, "Cluster-Controller")
 }
 
-var clusterInstance = &clusterv1alpha1.Cluster{
-	ObjectMeta: metav1.ObjectMeta{
-		Name:      "foo",
-		Namespace: "clusterapi-test",
-	},
-	Spec: clusterv1alpha1.ClusterSpec{
+var clusterSpec = &clusterv1alpha1.ClusterSpec{
 		ClusterNetwork: clusterv1alpha1.ClusterNetworkingConfig{
 			ServiceDomain: "mydomain.com",
 			Services: clusterv1alpha1.NetworkRanges{
@@ -36,19 +31,16 @@ var clusterInstance = &clusterv1alpha1.Cluster{
 				CIDRBlocks: []string{"192.168.0.0/16"},
 			},
 		},
-	},
-}
-
-var testNamespace = "clusterapi-test"
+	}
 
 var _ = Describe("Cluster-Controller", func() {
 	var clusterapi client.ClusterInterface
 	var client *kubernetes.Clientset
 	var stopper chan struct{}
 	var informer cache.SharedIndexInformer
+	var testNamespace string
 
 	BeforeEach(func() {
-
 		// Load configuration
 		kubeconfig := os.Getenv("KUBECONFIG")
 		config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
@@ -59,9 +51,10 @@ var _ = Describe("Cluster-Controller", func() {
 		Expect(err).ShouldNot(HaveOccurred())
 
 		// Create namespace for test
-		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: testNamespace}}
-		_, err = client.Core().Namespaces().Create(ns)
+		ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{GenerateName: "clusterapi-test-"}}
+		ns, err = client.Core().Namespaces().Create(ns)
 		Expect(err).ShouldNot(HaveOccurred())
+		testNamespace = ns.ObjectMeta.Name
 
 		// Create  informer for events in the namespace
 		factory := informers.NewSharedInformerFactoryWithOptions(client, 0, informers.WithNamespace(testNamespace))
@@ -92,9 +85,16 @@ var _ = Describe("Cluster-Controller", func() {
 				},
 			})
 			go informer.Run(stopper)
+			Expect(cache.WaitForCacheSync(stopper, informer.HasSynced)).To(BeTrue())
 
 			// Create Cluster
-			cluster := clusterInstance.DeepCopy()
+			cluster := &clusterv1alpha1.Cluster{
+					ObjectMeta: metav1.ObjectMeta{
+						GenerateName: "cluster-",
+						Namespace: testNamespace,
+					},
+					Spec: *clusterSpec.DeepCopy(),
+				}
 			_, err := clusterapi.Create(cluster)
 			Expect(err).ShouldNot(HaveOccurred())
 
