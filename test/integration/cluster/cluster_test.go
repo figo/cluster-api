@@ -14,24 +14,41 @@ import (
 	clientset "sigs.k8s.io/cluster-api/pkg/client/clientset_generated/clientset"
 	client "sigs.k8s.io/cluster-api/pkg/client/clientset_generated/clientset/typed/cluster/v1alpha1"
 	"testing"
+	"time"
 )
+
+var clusterSpec = &clusterv1alpha1.ClusterSpec{
+	ClusterNetwork: clusterv1alpha1.ClusterNetworkingConfig{
+		ServiceDomain: "mydomain.com",
+		Services: clusterv1alpha1.NetworkRanges{
+			CIDRBlocks: []string{"10.96.0.0/12"},
+		},
+		Pods: clusterv1alpha1.NetworkRanges{
+			CIDRBlocks: []string{"192.168.0.0/16"},
+		},
+	},
+}
+
+// Constructs a function for async event retrieval
+// amenable to be used with Gomega's Eventually assertion
+func checkEvents(c chan *corev1.Event) func() *corev1.Event {
+	return func() *corev1.Event {
+		select {
+		case e := <-c:
+			return e
+		default:
+			return nil
+		}
+	}
+}
+
+const TIMEOUT = 10 * time.Second
+const RETRY = 100 * time.Millisecond
 
 func TestCluster(t *testing.T) {
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Cluster-Controller")
 }
-
-var clusterSpec = &clusterv1alpha1.ClusterSpec{
-		ClusterNetwork: clusterv1alpha1.ClusterNetworkingConfig{
-			ServiceDomain: "mydomain.com",
-			Services: clusterv1alpha1.NetworkRanges{
-				CIDRBlocks: []string{"10.96.0.0/12"},
-			},
-			Pods: clusterv1alpha1.NetworkRanges{
-				CIDRBlocks: []string{"192.168.0.0/16"},
-			},
-		},
-	}
 
 var _ = Describe("Cluster-Controller", func() {
 	var clusterapi client.ClusterInterface
@@ -89,16 +106,16 @@ var _ = Describe("Cluster-Controller", func() {
 
 			// Create Cluster
 			cluster := &clusterv1alpha1.Cluster{
-					ObjectMeta: metav1.ObjectMeta{
-						GenerateName: "cluster-",
-						Namespace: testNamespace,
-					},
-					Spec: *clusterSpec.DeepCopy(),
-				}
+				ObjectMeta: metav1.ObjectMeta{
+					GenerateName: "cluster-",
+					Namespace:    testNamespace,
+				},
+				Spec: *clusterSpec.DeepCopy(),
+			}
 			_, err := clusterapi.Create(cluster)
 			Expect(err).ShouldNot(HaveOccurred())
 
-			Expect(<-events).NotTo(BeNil())
+			Eventually(checkEvents(events), TIMEOUT, RETRY).ShouldNot(BeNil())
 
 		})
 	})
